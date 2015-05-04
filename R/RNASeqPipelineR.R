@@ -14,6 +14,7 @@
 #' @import GEOquery
 #' @import SRAdb
 #' @import stringr
+
 NULL
 
 ## silence complaints about variables not found in calls that use non-standard evaluation
@@ -81,7 +82,7 @@ createProject <- function(project_name,path=".",verbose=FALSE, load_from_immport
   if(success)
     invisible()
   cmnd_prefix <- "mkdir -p "
-  dirs <- c(SRA="SRA",FASTQ="FASTQ",RSEM="RSEM",FASTQC="FASTQC",GEO="GEO",CONFIG="CONFIG",OUTPUT="OUTPUT",RAWANNOTATIONS="RAW_ANNOTATIONS",RNASEQC="RNASEQC",TOPHAT="TOPHAT", BAM='BAM')
+  dirs <- c(SRA="SRA",FASTQ="FASTQ",RSEM="RSEM",FASTQC="FASTQC",GEO="GEO",CONFIG="CONFIG",OUTPUT="OUTPUT",RAWANNOTATIONS="RAW_ANNOTATIONS",RNASEQC="RNASEQC",TOPHAT="TOPHAT", BAM='BAM', RAWFASTQ="RAWFASTQ", STATS="STATS")
   if(load_from_immport)
     dirs<-c(dirs,Tab="Tab")
   subdirs <- file.path(project_dir,dirs)
