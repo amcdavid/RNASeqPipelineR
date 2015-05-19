@@ -103,13 +103,18 @@ vTRUE <- function(x){
 ##' Samples that appear repeatedly in the sample sheet are concatenated.
 ##' Reading fastq files, and writing output is parallelized. Set \code{options(mc.cores=NCORES)} to utilize.
 ##' We can't easily parallelize over input fastq if we might be concatenating across input fastq files.
-##' @param sampleSheet \code{data.table giving the map between wellID and input fastq file}
+##' @param sampleSheetName \code{character} giving the file name of the sample sheet, a csv file.
+##' @param sampleSheetProject if \code{TRUE} then the sample sheet gives path names relative to the RAWFASTQ project directory, otherwise they are taken relative to the current working directory.
 ##' @param out.dir directory that partitioned fastq will be written.  If NULL, then will use the FASTQ directory from the project.
 ##' @param minQualityTol \code{integer} number of bases below minQuality that will be tolerated in bridge-umi-wellID-suffix
 ##' @param minQuality \code{numeric} \code{minQualityTol} or more bases below this numeric quality in the bridge-umi-wellID-suffix will result in the read being discarded
 ##' @return Returns a \code{data.table} providing summary statistics (how many codes could be determined unambiguously by wellID and input fq1, as well as how many reads couldn't be matched by code or were ambiguous).
 ##' @export
-partitionFastqFiles <- function(sampleSheet, out.dir=NULL, minQualityTol=4, minQuality=15) {
+partitionFastqFiles <- function(sampleSheetName, sampleSheetProject=TRUE, out.dir=NULL, minQualityTol=4, minQuality=15) {
+    sampleSheet <- fread(sampleSheetName)
+    in.dir <- getConfig()[['subdirs']][['RAWFASTQ']]
+    if(sampleSheetProject) sampleSheet[,':='(fq1=file.path(in.dir, fq1),
+                                               fq2=file.path(in.dir, fq2))]
     out.dir <- getConfig()[["subdirs"]][["FASTQ"]]
     uniqFiles <- unique(sampleSheet[,list(fq1, fq2)])
     stats <- vector('list', length=nrow(uniqFiles))
@@ -178,13 +183,15 @@ partitionFastqFiles <- function(sampleSheet, out.dir=NULL, minQualityTol=4, minQ
             message('Writing to disk...', appendLF=FALSE)
             mclapply(sampleID, function(s){
                 for(j in seq_along(mateTrim))
-                    writeFastq(mateTrim[[j]][indices_good[s,reindex,nomatch=0]], paste0(out.dir, s, "_", j, ".fastq"), mode='a', compress=FALSE)
+                    thisfname <- file.path(out.dir,  paste0(s, "_", j, ".fastq"))
+                    writeFastq(mateTrim[[j]][indices_good[s,reindex,nomatch=0]], thisfname, mode='a', compress=FALSE)
             })
             yield.stat <- indices_good[,list(.N),key=list(WellIDSeq)]
             badSuffix <- indices_all[,.N,keyby=nsuffix][nsuffix != 1]
             nlowqual <- nrow(indices_all[nsuffix==1 & lowqual < 0,])
             yield.stat <- rbind(yield.stat,
-                               data.table(WellIDSeq=c('UNSUFFIXED', 'AMBIGUOUS', 'LOWQUAL', 'NONE'),
+                               data.table(WellIDSeq=c(c('UNSUFFIXED', 'AMBIGUOUS')[1:nrow(badSuffix)],
+                                              'LOWQUAL', 'NONE'),
                                           N=c(badSuffix[,N],
                                               nlowqual,
                                               length(fq[[1]])-nrow(indices_all))))
@@ -200,7 +207,7 @@ partitionFastqFiles <- function(sampleSheet, out.dir=NULL, minQualityTol=4, minQ
         close(f1)
         close(f2)
     }
-    saveRDS(file.path(getConfig()[["subdirs"]][["STATS"]], 'partition_stats.rds'))
+    saveRDS(stats, file.path(getConfig()[["subdirs"]][["STATS"]], 'partition_stats.rds'))
     invisible(rbindlist(stats))
 }
 
