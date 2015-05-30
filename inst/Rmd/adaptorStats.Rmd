@@ -1,0 +1,50 @@
+# Partitioning of paired-end reads
+
+```{r load, echo=FALSE, error=FALSE}
+prefix = 'adapt__'
+opts_chunk$set(message=FALSE, error=FALSE, warning=FALSE, cache=TRUE, auto.dep=TRUE, echo=FALSE, results='hide', fig.path=paste0('figure/', prefix), cache.path=paste0('cache/', prefix))
+library(RNASeqPipelineR)
+library(data.table)
+library(ggplot2)
+library(stringr)
+```
+
+```{r data}
+stat.path <- getConfig()[["subdirs"]][["STATS"]]
+stats <- readRDS(file.path(stat.path, 'partition_stats.rds'))
+if(!is.data.table(stats)) stats <- rbindlist(stats)
+sheet <- readRDS(file.path(stat.path, 'sample_sheet.rds'))
+setkey(stats, fq1, WellIDSeq)
+setkey(sheet, fq1, WellIDSeq)
+stats2 <- sheet[stats]
+split <- stringr::str_split(stats2$fq1, .Platform$file.sep)
+split <- sapply(split, function(x) abbreviate(x[length(x)], 25))
+stats2[,fshort:=split]
+
+```
+
+## Recovered by input fastq
+
+```{r recovered, fig.width=12}
+stats2[,recovered:=WellIDSeq]
+stats2[!is.na(sampleID), recovered:='RECOVERED']
+stats3 <- stats2[,.(Ntot=sum(N), fshort=fshort),keyby=list(fq1, recovered)]
+ggplot(stats3, aes(x=fshort, y=Ntot, fill=recovered)) + geom_bar(stat='identity') + ylab('Number of mate pairs') + coord_flip()
+```
+
+
+## Key
+**RECOVERED** found a adaptor (in first 30 nucleotides) + UMI + wellID in one, and only one of the mate pairs and could map wellIDSeq back to one listed on the sample sheet
+**UNSUFFIXED** found adaptor, but didn't find a known wellID
+**NONE** couldn't find any adaptor
+**AMBIGUOUS** found adaptor and known wellID on both pairs
+**LOWQUAL** UMI and wellID had more than 3 bases < quality of 15
+
+## Top 20 Unrecovered WELLIDs, etc
+```{r badwell, results='asis', eval=FALSE}
+setkey(stats2, recovered)
+badwell <- stats2[recovered != 'RECOVERED',]
+setorder(badwell, -N)
+kable(badwell[,.SD[order(N, decreasing=TRUE),][1:5,],keyby=list(fq1)][,.(fq1, WellIDSeq, N)])
+
+```

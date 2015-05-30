@@ -18,8 +18,8 @@ if(getRversion() >= "2.15.1") globalVariables(c('qname',
                   'Dist',
                   '.'))
 
-stripExtension <- function(x){
-    stri_replace_last(x,  '', regex='(\\.transcript)?\\.bam$')
+RSEMstripExtension <- function(x){
+    stri_replace(x,  '', regex='(\\.transcript)?\\.bam$')
 }
 
 ##' Deduplicate a folder of .bams by using UMIs
@@ -37,13 +37,13 @@ stripExtension <- function(x){
 ##' @import data.table
 ##' @import Rsamtools
 ##' @export
-deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../DEDUPLICATED_BAM/', ...){
+deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../BAM/', ...){
     if(missing(bam.path)){
         bam.path <- getConfig()[["subdirs"]][["RSEM"]]
     }
     bamin <- list.files(path=bam.path, pattern='*transcript.bam$', full.names=TRUE)
 
-    isRelative <- stri_detect(destination.prefix, regex='^/')
+    isRelative <- !stri_detect(destination.prefix, regex='^/')
     dest <- if(isRelative) file.path(dirname(bamin[1]), destination.prefix) else destination.prefix
     if(!dir.exists(dest)) {
         message('Making directory ', dest)
@@ -51,15 +51,15 @@ deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../DEDUPLICAT
     }
 
     bamout <- list.files(dest, pattern='*.(transcript.)?bam$', full.names=TRUE)
-    no <-  stripExtension(basename(bamin)) %in% stripExtension(basename(bamout))
+    no <-  RSEMstripExtension(basename(bamin)) %in% RSEMstripExtension(basename(bamout))
     bamyes <- bamin[!no]
     if(length(bamyes)>0){
         message("Deduplicating ", length(bamyes), " files to ", dest)
         out <- parallel::mclapply(bamyes, function(x) writeDeduplicatedBam(x, destination.prefix=dest, ...), mc.cores=ncores)
-        out <- lapply(bamyes[1:5], function(x) writeDeduplicatedBam(x, destination.prefix=dest, ...))
+        ##out <- lapply(bamyes[1:5], function(x) writeDeduplicatedBam(x, destination.prefix=dest, ...))
         err <- sapply(out, inherits, 'try-error')
         if(any(err)) warning('Problems deduplicating file(s) ', paste(bamyes[err], collapse=','))
-        save(out, file=file.path(getConfig()[["subdirs"]][["STATS"]], 'deduplicateStats.RData'))
+        saveRDS(out, file=file.path(getConfig()[["subdirs"]][["STATS"]], 'deduplicateStats.rds'))
         invisible(out)
     } else{
         message("Nothing to deduplicate")
@@ -74,7 +74,7 @@ deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../DEDUPLICAT
 ## trim.len: how far should the reads be trimmed for the purposes of finding duplicates
 ## return.stats: should statistics regarding the deduplication be returned
 ## write: should the deduplicated files be written (or just stats returned).
-writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATED_BAM/', chunksize=5e6, trim.len=50, return.stats=FALSE,write=TRUE,...){
+writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATED_BAM/', chunksize=5e6, trim.len=50, return.stats=TRUE,write=TRUE,...){
     what <- c("qname", "rname", "pos", "seq", "strand", "qual")
     bf <- open(BamFile(bamfilename, yieldSize=chunksize))
     uniq <- list()
@@ -98,7 +98,7 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
     message('Keeping ', nrow(goodqnametable), ' of which ', 
          nrow(goodqnametable[multiplicity>0]), ' are mapped.')
     FR <- IRanges::FilterRules(function(DF) !(DF$qname %in% badqname))
-    destname <- file.path(destination.prefix, paste0(stripExtension(basename(bamfilename)), '.bam'))
+    destname <- file.path(destination.prefix, paste0(RSEMstripExtension(basename(bamfilename)), '.bam'))
     dest <- stats <- NULL
     if(write){
         dest <- filterBam(bamfilename, destination=destname, index=character(0), filter=FR, params=ScanBamParam(what='qname'), indexDestination=FALSE)
@@ -109,7 +109,7 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
                       multiplicity=multiplicityUnmapped[multiplicityUnmapped>0])
     }
     
-    list(ndiscard=length(badqname), nkeep=length(setdiff(goodqname, badqname)), dest=stripExtension(basename(bamfilename)), stats=stats)
+    list(ndiscard=length(badqname), nkeep=length(setdiff(goodqname, badqname)), dest=RSEMstripExtension(basename(bamfilename)), stats=stats)
 }
 
 

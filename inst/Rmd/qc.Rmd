@@ -1,160 +1,84 @@
+# QC report on mapping, multiplicity and genes detected
 ```{r load, echo=FALSE, error=FALSE}
 prefix = 'qc__'
-opts_chunk$set(message=FALSE, error=FALSE, warning=FALSE, cache=TRUE, auto.dep=TRUE, echo=FALSE, results='hide', fig.path=paste0('figure/', prefix), cache.path=paste0('cache/', prefix))
-library(SingleCellAssay)
+opts_chunk$set(message=FALSE, error=FALSE, warning=TRUE, cache=FALSE, auto.dep=TRUE, echo=FALSE, results='hide', fig.path=paste0('figure/', prefix), cache.path=paste0('cache/', prefix))
+library(RNASeqPipelineR)
+library(MAST)
 library(NMF)
-library(abind)
 library(plyr)
 library(data.table)
 library(reshape)
 library(ggplot2)
 library(stringr)
-library(Rsamtools)
-stopifnot(packageVersion('SingleCellAssay')>=.915)
-```
 
-```{r compareMapping, eval=FALSE}
-lob <- list.files('../BTK/RSEM', pattern='*.transcript.bam', full.names=TRUE)
-rsemMapped <- adply(lob, 1, function(fi){
-    bam <- BamFile(fi)
-    mapped <- countBam(bam, param=ScanBamParam(flag=scanBamFlag(isUnmappedQuery=FALSE)))
-    unmapped <- countBam(bam)
-    c(mapped=mapped$records, total=unmapped$records, file=as.character(mapped$file))
-})
-
-lobTH <- list.files('../data', '*.bam', full.names=TRUE, recursive=TRUE)
-thMapped <-  adply(lobTH, 1, function(fi){
-    bam <- BamFile(fi)
-    mapped <- countBam(bam, param=ScanBamParam(flag=scanBamFlag(isUnmappedQuery=FALSE)))
-    unmapped <- countBam(bam)
-    c(mapped=mapped$records, total=unmapped$records, file=as.character(mapped$file))
-})
-setDT(thMapped)
-setDT(rsemMapped)
-rsemMapped[,file:=str_replace(file, fixed('transcript.'), '')]
-thMapped[,method:='tophat']
-rsemMapped[,method:='rsem']
-bothMapped <- rbind(thMapped, rsemMapped)
-bothMapped[,':='(mapped=as.numeric(mapped),
-                 type=ifelse(str_detect(file, 'p12|p6'), 'bulk', 'single'))
-                 ]
-
-ggplot(bothMapped, aes(y=mapped, x=method))+geom_boxplot() + facet_wrap(~type, scales='free_y')
+stat.path <- getConfig()[["subdirs"]][["STATS"]]
+rsem.path <- getConfig()[["subdirs"]][["RSEM"]]
+sheet.path <- file.path(stat.path, 'sample_sheet.rds')
+fdat.path <- file.path(rsem.path, 'rsem_fdata.csv')
+cdat.path <- sheet.path
+tpm.path <- file.path(rsem.path, 'rsem_tpm_matrix.csv')
+sheet <- readRDS(sheet.path)
 
 ```
+
+
 ## Mapping statistics
 ```{r mapstats}
-setwd('..')
-library(devtools)
-load_all('~/RNASeqPipelineR')
-loadProject('.', 'BTK')
-mapping <- list(dup=RSEMSummarizeMapping('BTK/RSEM_DUP', log=TRUE, plot=FALSE)[,dup:='dup'],
-                dedup=RSEMSummarizeMapping('BTK/RSEM_DEDUP', log=TRUE, plot=FALSE)[,dup:='dedup'])
+mapping <- lapply(names(rsemloc), function(nm){
+                      mapsum <- RSEMSummarizeMapping(rsemloc[[nm]], log=TRUE, plot=FALSE)
+                      mapsum[,dup:=nm]
+                      mapsum
+           })
 
 mapping <- rbindlist(mapping, fill=TRUE)
-sampleSheet <- fread('BTK/RAW_ANNOTATIONS/sample_sheet_2.csv')
 setkey(mapping, file)
-setkey(sampleSheet, sampleID)
-mapping2 <- mapping[unique(sampleSheet)][,run:=str_match(fastq1, '/([0-9]+.+?)_pf\\.fastq$')[,2]]
-ggplot(mapping2, aes(x=dup, y=value))+geom_line(aes(group=file), alpha=.2)+ geom_boxplot()+facet_grid(run~variable, scale='free_y') + ylab('log10(reads)')+theme_bw()
-setwd('analysis')
+setkey(sheet, sampleID)
+mapping2 <- mapping[unique(sheet)]
+ggplot(mapping2, aes(x=dup, y=value))+geom_line(aes(group=file), alpha=.2)+ geom_boxplot()+facet_grid(samplePrefix~variable, scale='free_y') + ylab('log10(reads)')+theme_bw()
+ggplot(mapping2, aes(x=factor(WellID), y=value, col=variable))+ geom_boxplot()+facet_wrap(~samplePrefix, scale='free_y') + ylab('log10(reads)')+theme_bw()
+
 ```
 
 ## Multiplicity
 ```{r multiplicity}
-load('dedupstats.RData')
-multi <- lapply(stats, '[[', 'multiplicity')
-ed <- lapply(stats, '[[', 'potentialDupED')
+dupstat <- readRDS(file.path(stat.path, 'deduplicateStats.rds'))
+pdupstat <- RNASeqPipelineR:::processDupStats(dupstat)
+ggplot(pdupstat$mQuantile, aes(x=value))+stat_ecdf() + scale_x_log10()
+log10mult <- log10(pdupstat$mQuantile[,value])
+dens <- density(log10mult, diff(range(log10mult))/30)
+cutot <- data.frame(multiplicity=10^dens$x, y=dens$y, totalreads=cumsum(dens$y*10^(dens$x)))
+ggplot(cutot, aes(x=multiplicity, y=totalreads))+geom_line()+scale_x_log10()+scale_y_log10()
+ggplot(cutot, aes(x=multiplicity, y=y))+geom_line()+scale_x_log10()
 ```
 
 
 
 ```{r readexprmatrix}
-makeSCA <- function(tpmfile){
-    ee <- as.matrix(fread(tpmfile))
-    rownames(ee) <- ee[,1]
-    ee <- ee[,-1]
-    fdat <- fread('../BTK/RSEM/rsem_fdata.csv')
-    cdatBulk <- fread('../data/PKG - Btk bulk seq/sampleInfo.csv')
-    cdatSingle <- fread('../data/PKG - Btk single cell/832_Run4_sampleInfo.csv')
-    setnames(cdatBulk, c('seqRun', 'Type', 'Pt'), c('run', 'type', 'pt'))
-    setnames(cdatSingle, c('CellType', 'Type', 'Run', 'Pt_-plate'), c('cellType', 'type', 'run', 'pt'))
-    cdat <- rbind(cdatBulk, cdatSingle, fill=TRUE)
-    cdat[,file:=str_replace(file, fixed('.bam'), '')]
-    fdat[,primerid:=str_replace(entrez_id, ',.*', '')]
-    fdat[,primerid:=make.unique(ifelse(is.na(primerid), 'unknown', primerid))]
-    stopifnot(nrow(fdat) == nrow(ee))
-    ee <- ee[fdat$gene_id,]
-    rownames(ee) <- fdat$primerid
-    ee <- log2(t(ee)+1)
-    cdat[,wellKey:=file]
-    setkey(cdat, wellKey)
-    cdat <- cdat[rownames(ee)]
-    cdat[, group := str_match(wellKey, 'p[0-9]+')]
-    fm <- FromMatrix('RNASeqAssay', ee, cdat, fdat)
-    fm <- fm[,freq(fm)>.02]
-    ngo <- rowMeans(exprs(fm)>0)
-    setkey(mapping, file)
-    log10libsize <- mapping[variable=='mapped',][cData(fm)$wellKey, value]
-    fm <- combine(fm, data.frame(ngeneson=ngo, cngeneson=ngo-mean(ngo), log10libsize=log10libsize))
-    fm
-}
-fm <- makeSCA('../BTK/RSEM/rsem_tpm_matrix.csv')
+fm <- makeSCA(tpm.path, fdat.path, sheet)
 ```
 I found a total of `r nrow(fm)` wells (both bulk and single).  After filtering genes with less than 2% expression, there are `r ncol(fm)` genes.
 
 ## Expression statistics
-```{r qcMetric, fig.width=8, fig.height=8}
-ggplot(cData(fm), aes(x=ngeneson, y=log10libsize, col=cond))  + geom_text(aes(label=file), size=3)+theme_bw() + facet_wrap(~group)
+```{r qcMetric, fig.width=8, fig.height=8, eval=FALSE}
+ggplot(cData(fm), aes(x=ngeneson))  + geom_text(aes(label=file), size=3)+theme_bw() + facet_wrap(~group)
 ```
 
-### Bulk cell heatmap
+## Heatmap of log2+1 transcripts per million
 ```{r bulkhm}
-bulk <- subset(fm, !is.na(type) & type=='Bulk_seq') 
-aheatmap(exprs(bulk), annRow=subset(cData(bulk), select=c(cond, cellType)))
+aheatmap(exprs(fm))#, annRow=subset(cData(bulk), select=c(cond, cellType)))
 ```
 
-### Single cell heatmap
-```{r singlehm, fig.height=15, fig.width=15}
-single <- subset(fm, is.na(type) | type!='Bulk_seq') 
-aheatmap(exprs(single), annRow=subset(cData(single), select=cond))
-```
-
-
-### Bulk cells with less than 5% expression
+## Low expressing cells
 ```{r bulklowngo, results='asis'}
-cdb <- cData(bulk)
-cdb$totalgenes <- cdb$ngeneson*ncol(fm)
-kable(subset(cdb[order(cdb$ngeneson),], select=c(file, name, run, pt, cellType, cond, ngeneson, totalgenes, log10libsize))) 
+cd <- as.data.table((cData(fm)))
+setkey(cd, ngeneson)
+kable(cd[1:min(nrow(cd), 40)])
 ```
 
-### Highly expressed genes
+## Highly expressed genes
 ```{r genefreq}
-fmsplit <- split(fm, 'type')
-freqs <- ldply(fmsplit@set, function(x){
-    fx <- freq(x)
-    data.frame(primerid=names(fx), freq=fx)})
-setDT(freqs)
-freqs[,rankfreq:=rank(-freq), keyby='.id']
-fd <- as.data.table(fData(fm))
-setkey(freqs, primerid)
-setkey(fd, primerid)
-freqs2 <- freqs[fd,] 
-ggplot(freqs2[rankfreq<40,], aes(y=gene_symbol, x=freq, col=.id))+geom_point()
+freqs <- freq(fm)
+freqs <- data.table(freqs, fData(fm))
+freqs[,rankfreq:=rank(-freqs)]
+ggplot(freqs[rankfreq<40,], aes(y=gene_symbol, x=freqs))+geom_point()
 ```
-
-
-<!-- ## Differential Expression in bulk -->
-<!-- Number of bulk replicates per condition -->
-<!-- ```{r bulkgroups, results='asis'} -->
-<!-- kable(with(cData(bulk), table(cellType, cond))) -->
-<!-- ``` -->
-
-<!-- ```{r dode} -->
-<!-- options(mc.cores=4) -->
-<!-- zz <- zlm(~cellType + cond + ngeneson, data=bulk, method='bayesglm', ebayes=TRUE) -->
-<!-- ``` -->
-
-<!-- ```{r summarizeDE} -->
-<!-- S <- summary(zz) -->
-<!-- ``` -->

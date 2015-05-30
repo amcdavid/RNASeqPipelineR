@@ -182,19 +182,23 @@ partitionFastqFiles <- function(sampleSheetName, sampleSheetProject=TRUE, out.di
             sampleID <- unique(sampleSheet[fq1==uniqFiles[i,fq1]]$sampleID)
             message('Writing to disk...', appendLF=FALSE)
             mclapply(sampleID, function(s){
-                for(j in seq_along(mateTrim))
+                for(j in seq_along(mateTrim)){
                     thisfname <- file.path(out.dir,  paste0(s, "_", j, ".fastq"))
                     writeFastq(mateTrim[[j]][indices_good[s,reindex,nomatch=0]], thisfname, mode='a', compress=FALSE)
+                }
             })
+            ## stats by wellidseq
             yield.stat <- indices_good[,list(.N),key=list(WellIDSeq)]
+            ## reads did not have one and only one suffix (=adaptor + wellID + suffix)
             badSuffix <- indices_all[,.N,keyby=nsuffix][nsuffix != 1]
+            ## reads with one suffix but too low in quality
             nlowqual <- nrow(indices_all[nsuffix==1 & lowqual < 0,])
-            yield.stat <- rbind(yield.stat,
-                               data.table(WellIDSeq=c(c('UNSUFFIXED', 'AMBIGUOUS')[1:nrow(badSuffix)],
-                                              'LOWQUAL', 'NONE'),
+            special.stat <- data.table(WellIDSeq=c(c('UNSUFFIXED', 'AMBIGUOUS')[1:nrow(badSuffix)],
+                                              'LOWQUAL', 'NOADAPTER'),
                                           N=c(badSuffix[,N],
                                               nlowqual,
-                                              length(fq[[1]])-nrow(indices_all))))
+                                              length(fq[[1]])-nrow(indices_all)))
+            yield.stat <- rbind(yield.stat, special.stat)
             setkey(yield.stat, WellIDSeq)
             this.stat <- merge(this.stat, yield.stat, all=TRUE, by='WellIDSeq')
             this.stat[is.na(this.stat)] <- 0
@@ -207,8 +211,10 @@ partitionFastqFiles <- function(sampleSheetName, sampleSheetProject=TRUE, out.di
         close(f1)
         close(f2)
     }
+    stats <- rbindlist(stats)
     saveRDS(stats, file.path(getConfig()[["subdirs"]][["STATS"]], 'partition_stats.rds'))
-    invisible(rbindlist(stats))
+    saveRDS(sampleSheet, file.path(getConfig()[["subdirs"]][["STATS"]], 'sample_sheet.rds'))
+    invisible(stats)
 }
 
 ## script to test output

@@ -804,6 +804,7 @@ RSEMAssembleExpressionMatrix <- function(force=FALSE){
 ##' @param log return log of reads?
 ##' @param plot print a ggplot summary
 ##' @return returns a data table of # reads per library, invisibly
+##' @export
 RSEMSummarizeMapping <- function(dir, log=TRUE, plot=TRUE){
     if(missing(dir)) dir <- getConfig()[["subdirs"]][["RSEM"]]
     cnt_files <- list.files(dir, pattern="*.cnt", full.names = TRUE, recursive=TRUE)
