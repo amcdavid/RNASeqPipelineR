@@ -1,6 +1,7 @@
 # QC report on mapping, multiplicity and genes detected
 ```{r load, echo=FALSE, error=FALSE}
 prefix = 'qc__'
+library(knitr)
 opts_chunk$set(message=FALSE, error=FALSE, warning=TRUE, cache=FALSE, auto.dep=TRUE, echo=FALSE, results='hide', fig.path=paste0('figure/', prefix), cache.path=paste0('cache/', prefix))
 library(RNASeqPipelineR)
 library(MAST)
@@ -24,6 +25,8 @@ sheet <- readRDS(sheet.path)
 
 ## Mapping statistics
 ```{r mapstats}
+## rsemloc defined in RNASeqPipeLineR::mappingReport
+## (just a named list of directories with RSEM output)
 mapping <- lapply(names(rsemloc), function(nm){
                       mapsum <- RSEMSummarizeMapping(rsemloc[[nm]], log=TRUE, plot=FALSE)
                       mapsum[,dup:=nm]
@@ -33,7 +36,7 @@ mapping <- lapply(names(rsemloc), function(nm){
 mapping <- rbindlist(mapping, fill=TRUE)
 setkey(mapping, file)
 setkey(sheet, sampleID)
-mapping2 <- mapping[unique(sheet)]
+mapping2 <- mapping[unique(sheet),,allow.cartesian=TRUE, nomatch=0]
 ggplot(mapping2, aes(x=dup, y=value))+geom_line(aes(group=file), alpha=.2)+ geom_boxplot()+facet_grid(samplePrefix~variable, scale='free_y') + ylab('log10(reads)')+theme_bw()
 ggplot(mapping2, aes(x=factor(WellID), y=value, col=variable))+ geom_boxplot()+facet_wrap(~samplePrefix, scale='free_y') + ylab('log10(reads)')+theme_bw()
 

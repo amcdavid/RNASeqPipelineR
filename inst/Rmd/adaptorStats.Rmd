@@ -9,7 +9,9 @@ library(ggplot2)
 library(stringr)
 ```
 
-```{r data}
+```{r data}                                       
+## merge partitioning stats (how many reads were demultiplexed)
+## with sample sheet stats (mapping wellID -> sample features)
 stat.path <- getConfig()[["subdirs"]][["STATS"]]
 stats <- readRDS(file.path(stat.path, 'partition_stats.rds'))
 if(!is.data.table(stats)) stats <- rbindlist(stats)
@@ -27,8 +29,11 @@ stats2[,fshort:=split]
 
 ```{r recovered, fig.width=12}
 stats2[,recovered:=WellIDSeq]
+## The "wellIDseq" contains special values other than nucleotide sequences
+##  If "sampleID" was set, then we found something.  Otherwise we failed and we'll use what was present in the WellIDSeq as an error code.
 stats2[!is.na(sampleID), recovered:='RECOVERED']
-stats3 <- stats2[,.(Ntot=sum(N), fshort=fshort),keyby=list(fq1, recovered)]
+## stratify and count by recovery state
+stats3 <- stats2[,.(Ntot=sum(N), fshort=fshort[1]),keyby=list(fq1, recovered)]
 ggplot(stats3, aes(x=fshort, y=Ntot, fill=recovered)) + geom_bar(stat='identity') + ylab('Number of mate pairs') + coord_flip()
 ```
 

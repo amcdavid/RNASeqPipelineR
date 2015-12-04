@@ -8,22 +8,23 @@
 ##' @export
 partitionReport <- function(){
     file.copy(file.path(system.file(package='RNASeqPipelineR'), 'Rmd', 'adaptorStats.Rmd'), getwd(), overwrite=FALSE)
-    knit2html('adaptorStats.Rmd')
+    knitr::knit2html('adaptorStats.Rmd')
 }
 
 ##' Generate a report on mapping/deduplication
 ##'
 ##' @param ... named arguments giving directories in which RSEM was run.  By default, looks at \code{getConfig()[["RSEM"]]}
-##' @describeIn partitionReport copies 'qc.Rmd' and generates a report on "deduplicateStats.RData" and on mapping statistics located in various RSEM directories 
+##' @describeIn partitionReport copies 'qc.Rmd' and generates a report on "deduplicateStats.RData" and on mapping statistics located in various RSEM directories
 ##' @export
 mappingReport <- function(...){
     rsemloc <- list(...)
     if(length(rsemloc)==0) rsemloc <- list(dup=getConfig()[['subdirs']][["RSEM"]])
 
     file.copy(file.path(system.file(package='RNASeqPipelineR'), 'Rmd', 'qc.Rmd'), getwd(), overwrite=FALSE)
-    knit2html('qc.Rmd')
+    knitr::knit2html('qc.Rmd')
 }
 
+## Collate statistics that were saved from the deduplication process
 processDupStats <- function(ddb){
 dest <- sapply(ddb, '[[', 'dest')
 nkeep <- sapply(ddb, '[[', 'nkeep')
