@@ -126,10 +126,12 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
     filterFunc <- function(DF) !(DF$qname %in% badqname)
     FR <- IRanges::FilterRules(filterFunc)
     #FR <- IRanges::FilterRules(function(DF) !(DF$qname %in% badqname))
-    destname <- file.path(destination.prefix, paste0(RSEMstripExtension(basename(bamfilename)), '.bam'))
+    destname <- file.path(destination.prefix, paste0(RSEMstripExtension(basename(bamfilename))))
     dest <- stats <- NULL
     if(write){
-        dest <- filterBam(bamfilename, destination=destname, index=character(0), filter=FR, params=ScanBamParam(what='qname'), indexDestination=FALSE, yieldSize=floor(chunksize/5))
+        tmpdest <- paste0(destname, '.incomplete') #so that if we error out we don't leave incomplete bam files sitting around
+        dest <- filterBam(bamfilename, destination=tmpdest, index=character(0), filter=FR, params=ScanBamParam(what='qname'), indexDestination=FALSE, yieldSize=floor(chunksize/5))
+        file.rename(tmpdest, paste0(destname, '.bam'))
     }
     if(return.stats){
         multiplicityUnmapped <- do.call(c, lapply(uniq, '[[', 'multiplicity'))      

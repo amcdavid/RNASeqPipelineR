@@ -20,7 +20,7 @@ setkey(stats, fq1, WellIDSeq)
 setkey(sheet, fq1, WellIDSeq)
 stats2 <- sheet[stats]
 split <- stringr::str_split(stats2$fq1, .Platform$file.sep)
-split <- sapply(split, function(x) abbreviate(x[length(x)], 25))
+split <- sapply(split, function(x) abbreviate(x[length(x)], 25, method='both.sides'))
 stats2[,fshort:=split]
 
 ```
@@ -46,7 +46,7 @@ ggplot(stats3, aes(x=fshort, y=Ntot, fill=recovered)) + geom_bar(stat='identity'
 **LOWQUAL** UMI and wellID had more than 3 bases < quality of 15
 
 ## Top 20 Unrecovered WELLIDs, etc
-```{r badwell, results='asis', eval=FALSE}
+```{r badwell, results='asis'}
 setkey(stats2, recovered)
 badwell <- stats2[recovered != 'RECOVERED',]
 setorder(badwell, -N)
