@@ -17,8 +17,8 @@ partitionReport <- function(){
 ##' @describeIn partitionReport copies 'qc.Rmd' and generates a report on "deduplicateStats.RData" and on mapping statistics located in various RSEM directories
 ##' @export
 mappingReport <- function(...){
-    rsemloc <- list(...)
-    if(length(rsemloc)==0) rsemloc <- list(dup=getConfig()[['subdirs']][["RSEM"]])
+    rsemlocmaybe <- list(...)
+    if(length(rsemlocmaybe)>0) rsemloc <- rsemlocmaybe
 
     file.copy(file.path(system.file(package='RNASeqPipelineR'), 'Rmd', 'qc.Rmd'), getwd(), overwrite=FALSE)
     knitr::knit2html('qc.Rmd')

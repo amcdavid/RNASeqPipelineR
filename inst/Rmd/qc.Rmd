@@ -20,6 +20,11 @@ cdat.path <- sheet.path
 tpm.path <- file.path(rsem.path, 'rsem_tpm_matrix.csv')
 sheet <- readRDS(sheet.path)
 
+## if not defined in the global environment use this
+if(!exists('rsemloc')){
+rsemloc <- list(dup=rsem.path)
+}
+
 ```
 
 
@@ -57,7 +62,8 @@ ggplot(cutot, aes(x=multiplicity, y=y))+geom_line()+scale_x_log10()
 
 
 ```{r readexprmatrix}
-fm <- makeSCA(tpm.path, fdat.path, sheet)
+setkey(sheet, sampleID)
+fm <- RNASeqPipelineR:::makeSCA(tpm.path, fdat.path, unique(sheet))
 ```
 I found a total of `r nrow(fm)` wells (both bulk and single).  After filtering genes with less than 2% expression, there are `r ncol(fm)` genes.
 
