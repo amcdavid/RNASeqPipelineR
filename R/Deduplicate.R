@@ -83,6 +83,21 @@ deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../BAM/', ...
     }
 }
 
+SEQ_IDX_START <- 5
+SEQ_IDX_LEN <- 7
+collapseLowQualityReads <- function(dt, minProb=.3, maxProb=.8){
+    minQ <- floor(-10*log10(1-minProb)+.5)
+    maxQ <- floor(-10*log10(1-maxProb)+.5)
+    setkey(dt, qname, mapq)
+    dt[,':='(nminQ=sum(mapq>minQ),
+           nhiQ=sum(mapq>maxQ)), key=list(qname)]
+    dt[!is.na(pos) & nminQ<1, rname:=substr(seq, SEQ_IDX_START, SEQ_IDX_START+SEQ_IDX_LEN-1)]
+    dt[,rank:=seq_len(.N),keyby=list(qname, mapq)]
+    dt[,keep:=FALSE]
+    dt[rank==1, keep:=TRUE] #both hiQ>0 or nminQ < 1
+    dt[rank<5 & nminQ>0 & nhiQ<1, keep:=TRUE]
+    dt
+}
 
 ##bamfilename: character giving filename to bam
 ##destination.prefix: string (maybe directory name) to prepend to output
@@ -92,19 +107,28 @@ deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../BAM/', ...
 ## return.stats: should statistics regarding the deduplication be returned
 ## write: should the deduplicated files be written (or just stats returned).
 writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATED_BAM/', chunksize=2e6, trim.len=50, return.stats=TRUE,write=TRUE,debug=0, ...){
-    what <- c("qname", "rname", "pos", "seq", "qual")
+    what <- c("qname", "rname", "pos", "seq", "qual", "mapq")
     ## For the deduplication, it suffices to get the *primary* mapping of the forward read
     ## (Because we just use the first qname at the moment, anyways)
-    flag <- scanBamFlag(isNotPrimaryRead=FALSE)
+    flag <- scanBamFlag(isSecondaryAlignment=NA)
     bf <- open(BamFile(bamfilename, yieldSize=chunksize))
     uniq <- list()
     i <- 1
     repeat{
+        nrbam <- 0
         if(debug>1) message('Processing chunk ', i, ' of ', bamfilename)
-        bam <- scanBam(bf, param=ScanBamParam(what=what, flag=flag))[[1]]
-        if(length(bam$qname)==0) break
+        bamdtlist <- list()
+        j <- 1
+        while(nrbam<chunksize){
+            bam <- scanBam(bf, param=ScanBamParam(what=what, flag=flag))[[1]]
+            if(length(bam$qname)==0) break
         ## squal is negative sum of qualities (so that sorting in ascending order gives highest quality reads first)
-        bamdt <- data.table(qname = bam$qname, rname=bam$rname, pos=bam$pos, idx=seq_along(bam$qname), seq=substr(as.character(bam$seq), 1, trim.len),  squal=-alphabetScore(bam$qual))
+            bamdtlist[[j]] <- data.table(qname = bam$qname, rname=bam$rname, pos=bam$pos, idx=seq_along(bam$qname), seq=substr(as.character(bam$seq), 1, trim.len),  squal=-alphabetScore(bam$qual), mapq=bam$mapq)
+            bamdtlist[[j]] <- collapseLowQualityReads(bamdtlist[[j]])
+            nrbam <- nrow(bamdtlist[[j]]) + nrbam
+            j <- j +1
+        }
+        bamdt <- rbindlist(bamdtlist)
         rm(bam)
         gc()
         uniq[[i]] <- getUniqueQname(bamdt, debug=debug, ...)
@@ -241,6 +265,9 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
     return(list(badqnames=badqnames,
                 goodqnames=goodqname[keep==TRUE,.(qname, multiplicity)],
                 potentialDupED=ed,
-                multiplicity=goodqname[keep==TRUE,multiplicity]))
+                multiplicity=goodqname[keep==TRUE,multiplicity],
+                rname=goodqname[keep==TRUE,rname],
+                umi=goodqname[keep==TRUE,umi]                
+                ))
 }
 
