@@ -85,17 +85,23 @@ deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../BAM/', ...
 
 SEQ_IDX_START <- 5
 SEQ_IDX_LEN <- 7
-collapseLowQualityReads <- function(dt, minProb=.3, maxProb=.8){
+collapseLowQualityAlignments <- function(dt, minProb=.3, maxProb=.8){
     minQ <- floor(-10*log10(1-minProb)+.5)
     maxQ <- floor(-10*log10(1-maxProb)+.5)
     setkey(dt, qname, mapq)
+    setorder(dt, qname, -mapq)
     dt[,':='(nminQ=sum(mapq>minQ),
            nhiQ=sum(mapq>maxQ)), key=list(qname)]
-    dt[!is.na(pos) & nminQ<1, rname:=substr(seq, SEQ_IDX_START, SEQ_IDX_START+SEQ_IDX_LEN-1)]
-    dt[,rank:=seq_len(.N),keyby=list(qname, mapq)]
+    dt[!is.na(pos) & nminQ<1, ':='(rname=substr(seq, SEQ_IDX_START, SEQ_IDX_START+SEQ_IDX_LEN-1),
+                                   pos=0)]
+                                   
+    dt[,rank:=seq_len(.N),keyby=list(qname)]
     dt[,keep:=FALSE]
     dt[rank==1, keep:=TRUE] #both hiQ>0 or nminQ < 1
-    dt[rank<5 & nminQ>0 & nhiQ<1, keep:=TRUE]
+    dt[rank<5 & mapq>minQ, keep:=TRUE]
+    dt <- dt[keep==TRUE,]
+    dt[,':='(keep=NULL,
+             rank=NULL)]
     dt
 }
 
@@ -110,31 +116,31 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
     what <- c("qname", "rname", "pos", "seq", "qual", "mapq")
     ## For the deduplication, it suffices to get the *primary* mapping of the forward read
     ## (Because we just use the first qname at the moment, anyways)
-    flag <- scanBamFlag(isSecondaryAlignment=NA)
+    flag <- scanBamFlag(isSecondMateRead=FALSE)
     bf <- open(BamFile(bamfilename, yieldSize=chunksize))
     uniq <- list()
     i <- 1
     repeat{
         nrbam <- 0
-        if(debug>1) message('Processing chunk ', i, ' of ', bamfilename)
         bamdtlist <- list()
         j <- 1
-        while(nrbam<chunksize){
-            bam <- scanBam(bf, param=ScanBamParam(what=what, flag=flag))[[1]]
-            if(length(bam$qname)==0) break
+        while(length((bam <- scanBam(bf, param=ScanBamParam(what=what, flag=flag))[[1]])$qname)>0 && nrbam<chunksize){
+            if(debug>1) message('Processing chunk ', paste(i,j), ' of ', bamfilename)
+            
         ## squal is negative sum of qualities (so that sorting in ascending order gives highest quality reads first)
             bamdtlist[[j]] <- data.table(qname = bam$qname, rname=bam$rname, pos=bam$pos, idx=seq_along(bam$qname), seq=substr(as.character(bam$seq), 1, trim.len),  squal=-alphabetScore(bam$qual), mapq=bam$mapq)
-            bamdtlist[[j]] <- collapseLowQualityReads(bamdtlist[[j]])
+            bamdtlist[[j]] <- collapseLowQualityAlignments(bamdtlist[[j]])
             nrbam <- nrow(bamdtlist[[j]]) + nrbam
             j <- j +1
         }
         bamdt <- rbindlist(bamdtlist)
-        rm(bam)
         gc()
         uniq[[i]] <- getUniqueQname(bamdt, debug=debug, ...)
-        rm(bamdt)
         i <- i+1
+        if(length(bam$qname)==0) break
     }
+    rm(bamdt)
+    rm(bam)
     close(bf)
     ## in case we had to process the file in chunks
     badqname <- unique(do.call(c, lapply(uniq, '[[', 'badqnames')))
@@ -157,10 +163,17 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
         dest <- filterBam(bamfilename, destination=tmpdest, index=character(0), filter=FR, params=ScanBamParam(what='qname'), indexDestination=FALSE, yieldSize=floor(chunksize/5))
         file.rename(tmpdest, paste0(destname, '.bam'))
     }
+    
     if(return.stats){
-        multiplicityUnmapped <- do.call(c, lapply(uniq, '[[', 'multiplicity'))      
-        stats <- list(potentialDupED=do.call(c, lapply(uniq, '[[', 'potentialDupED')),
-                      multiplicity=multiplicityUnmapped[multiplicityUnmapped>0])
+        multiplicityUnmapped <- goodqnametable[,multiplicity]
+        potentialDupED <- do.call(c, lapply(uniq, '[[', 'potentialDupED'))
+        rname <- goodqnametable[multiplicity>0, rname]
+        umi <- goodqnametable[multiplicity>0,umi]
+        stats <- list(potentialDupED=potentialDupED[multiplicityUnmapped>0],
+                      multiplicity=multiplicityUnmapped[multiplicityUnmapped>0],
+                      rname=rname,
+                      umi=umi)
+        
     }
     
     list(ndiscard=length(badqname), nkeep=length(setdiff(goodqname, badqname)), dest=RSEMstripExtension(basename(bamfilename)), stats=stats)
@@ -181,20 +194,22 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
 ## goodqname (data.table of qnames to keep)
 ## ed (sample of edit distances of potential duplicates, useful to tune max.edit.dist)
 ## multiplicity (number of times each duplicate appeared, of interest to estimate fragment dropout rate)
-getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug=1){
+getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug=1, usePosition=TRUE){
     tic <- Sys.time()
     setkey(bamdt, qname, rname, pos, squal)
     
     ## list of qnames
     ## keep==TRUE when they'll be kept
-    goodqname <- unique(bamdt[,list(qname, keep=FALSE, multiplicity=NA_integer_)])
+    goodqname <- unique(bamdt[,list(qname, keep=FALSE, multiplicity=NA_integer_, umi=NA_character_, rname=NA_character_)])
     setkey(goodqname, qname)
 
     ## dtdup contains the list of unprocessed reads
     ## save the unmapped reads because RSEM uses them to estimate error rates
     dtdup <- bamdt[!is.na(pos),]
-    goodqname[bamdt[is.na(pos), qname], ':='(keep=TRUE,
-                                             multiplicity=0L)]
+    goodqname[bamdt[is.na(pos), .(qname)], ':='(keep=TRUE,
+                                             multiplicity=0L,
+                                             umi=NA_character_,
+                                             rname=NA_character_)]
 
     ## first matching alignment for each read
     ##    (because we use alignments as heuristic to place similar reads into
@@ -205,6 +220,7 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
     ## extract UMI from qname
     dtdup[,umi:=stri_extract_last(qname, regex=umipattern)]
     ## sort by rname, pos and umi
+    if(!usePosition) dtdup[,pos:=cut(pos, 10)]
     setkey(dtdup, rname, pos, umi, squal)
 
     
@@ -224,10 +240,12 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
         
         ## only one record.  keep them.
         ## Then pop these records from dtdup
-        dt1 <- dtdup[umidup==1,.(qname)]
+        dt1 <- dtdup[umidup==1,.(qname, umi, rname)]
         if(debug>2) message(nrow(dt1), " singletons kept")
-        goodqname[dt1$qname, ':='(keep=TRUE,
-                          multiplicity=1)]
+        goodqname[dt1[,.(qname, umi, rname)], ':='(keep=TRUE,
+                          multiplicity=1,
+                          umi=i.umi,
+                          rname=i.rname)]
         dtdup <- dtdup[umidup>1,]
         if(nrow(dtdup)==0) break
         
@@ -244,7 +262,7 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
         dt1 <- dtdup[,.(qname=qname[1], umidup=umidup[1]),keyby=list(rname, pos, umi)]
         if(debug>2) message(nrow(dt1), " first members of equivalence class kept")
         setkey(dt1, qname)
-        goodqname[dt1, c('keep', 'multiplicity'):=list(TRUE, umidup)]
+        goodqname[dt1, c('keep', 'multiplicity', 'umi', 'rname'):=list(TRUE, umidup, i.umi, i.rname)]
         ## index of edit distance matches
 	##save a subsample of edit distances
         samp <- min(nrow(dtdup), 100)
@@ -256,18 +274,15 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
         j <- j +1
     }
     toc <- Sys.time()
-    if(debug>1) message('Spent ', round(toc-tic, 1), ' seconds deduplicating. ', sum(goodqname$keep), ' unique reads.')
+    if(debug>1) message('Spent ', round(as.numeric(toc-tic, units='secs'), 1), ' seconds deduplicating. ', sum(goodqname$keep), ' unique reads.')
     badqnames <- goodqname[keep==FALSE,qname]
     
     ## sum of multiplicities should equal the number of mapped reads
     stopifnot(goodqname[keep==TRUE,sum(multiplicity)]==length(unique(bamdt[!is.na(pos), qname])))
     
     return(list(badqnames=badqnames,
-                goodqnames=goodqname[keep==TRUE,.(qname, multiplicity)],
-                potentialDupED=ed,
-                multiplicity=goodqname[keep==TRUE,multiplicity],
-                rname=goodqname[keep==TRUE,rname],
-                umi=goodqname[keep==TRUE,umi]                
+                goodqnames=goodqname[keep==TRUE,],
+                potentialDupED=ed
                 ))
 }
 
