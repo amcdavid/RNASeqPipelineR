@@ -33,6 +33,7 @@ RSEMstripExtension <- function(x){
 ##' @param ncores \code{integer} number of parallel processes to use. Be careful not to exceed the available memory--children processes appear to burst up to 2 gigs ram per million lines of .BAM to be read in at a time.  (You can control this by setting chunksize to a smaller value).
 ##' @param bam.path If provided, \code{character} giving the folder of input .bams.  If missing, then use the \code{RSEM} folder.
 ##' @param destination.prefix If provided, a \code{character} giving the folder of output .bams.  If missing, then use '../DEDUPLICATED_BAM' (evaluated relative to bam.path)
+##' @param stats.prefix If provided, a \code{character} giving the folder of output .bams.  If missing, then use the 'STATS' directory of the project.
 ##' @param ... additional arguments passed to \code{writeDeduplicatedBam}
 ##' @return data.table with statistics
 ##' @import ShortRead
@@ -40,7 +41,7 @@ RSEMstripExtension <- function(x){
 ##' @import data.table
 ##' @import Rsamtools
 ##' @export
-deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../BAM/', ...){
+deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../BAM/', stats.prefix, ...){
     if(missing(bam.path)){
         bam.path <- getConfig()[["subdirs"]][["RSEM"]]
     }
@@ -70,9 +71,9 @@ deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../BAM/', ...
             warning(out[err])
         }
         existingStats <- list()
+        statsPath <- if(missing(stats.prefix)) getConfig()[["subdirs"]][["STATS"]] else stats.prefix
         try({
-            statsRDS <- file.path(getConfig()[["subdirs"]][["STATS"]], 'deduplicateStats.rds')
-            
+            statsRDS <- file.path(statsPath, 'deduplicateStats.rds')            
             if(file.exists(statsRDS)) existingStats <- readRDS(statsRDS)
         })
         out <- c(existingStats, out)
