@@ -62,7 +62,7 @@ deduplicateBam <- function(ncores=6, bam.path, destination.prefix='../DEDUPLICAT
     if(length(bamyes)>0){
         message("Deduplicating ", length(bamyes), " files to ", dest)
         if(ncores>1){
-            out <- parallel::mclapply(bamyes, function(x) writeDeduplicatedBam(x, destination.prefix=dest, ...), mc.cores=ncores)
+            out <- parallel::mclapply(bamyes, function(x) writeDeduplicatedBam(x, destination.prefix=dest, stats.path=statsPath, ...), mc.cores=ncores)
         } else{
             out <- lapply(bamyes, function(x) writeDeduplicatedBam(x, destination.prefix=dest, stats.path=statsPath, ...))
         }
@@ -196,7 +196,7 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
         multiplicityUnmapped <- goodqnametable[,multiplicity]
         potentialDupED <- do.call(c, lapply(uniq, '[[', 'potentialDupED'))
         stats <- list(potentialDupED=potentialDupED[!is.na(potentialDupED)], dt=goodqnametable[multiplicity>0, .(rname, umi, multiplicity)], chunks=length(uniq))
-        statsOutput <- file.path(stats.path, paste0(destname, '_dedup_stats.rds')
+        statsOutput <- file.path(stats.path, paste0(destname, '_dedup_stats.rds'))
         saveRDS(c(retval, stats), file=statsOutput)
     }
     return(retval)
