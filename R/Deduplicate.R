@@ -1,12 +1,12 @@
-## deduplicate version .4
-## 12/07/15
+## deduplicate version .5
+## 3/11/16
+## Use top mapping 4 alignments (and if no good alignment exists, use a 7-mer for the rname)
+## Write stats atomically, then collate at the end.
 ## Fixes an issue with strand (which wasn't needed)
-## Uses the primary alignment for deduplication, which should speed things up
 ## Keep highest quality read (based on sum of qscores)
 ## Counts multiplicities more carefully
 ## TODO:
 ## -Analyze/Report sequence but not UMI duplicates
-## -abstract data collection
 ## Andrew McDavid
 
 
@@ -40,8 +40,9 @@ RSEMstripExtension <- function(x){
 ##' @import stringi
 ##' @import data.table
 ##' @import Rsamtools
+##' @import pryr
 ##' @export
-deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../BAM/', stats.prefix, ...){
+deduplicateBam <- function(ncores=6, bam.path, destination.prefix='../DEDUPLICATED_BAM', stats.prefix, ...){
     if(missing(bam.path)){
         bam.path <- getConfig()[["subdirs"]][["RSEM"]]
     }
@@ -57,12 +58,13 @@ deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../BAM/', sta
     bamout <- list.files(dest, pattern='*.(transcript.)?bam$', full.names=TRUE)
     no <-  RSEMstripExtension(basename(bamin)) %in% RSEMstripExtension(basename(bamout))
     bamyes <- bamin[!no]
+    statsPath <- if(missing(stats.prefix)) getConfig()[["subdirs"]][["STATS"]] else stats.prefix
     if(length(bamyes)>0){
         message("Deduplicating ", length(bamyes), " files to ", dest)
         if(ncores>1){
             out <- parallel::mclapply(bamyes, function(x) writeDeduplicatedBam(x, destination.prefix=dest, ...), mc.cores=ncores)
         } else{
-            out <- lapply(bamyes, function(x) writeDeduplicatedBam(x, destination.prefix=dest, ...))
+            out <- lapply(bamyes, function(x) writeDeduplicatedBam(x, destination.prefix=dest, stats.path=statsPath, ...))
         }
         err <- sapply(out, inherits, 'try-error')
         if(any(err)){
@@ -70,19 +72,29 @@ deduplicateBam <- function(ncores=1, bam.path, destination.prefix='../BAM/', sta
             warning('Errors were:')
             warning(out[err])
         }
-        existingStats <- list()
-        statsPath <- if(missing(stats.prefix)) getConfig()[["subdirs"]][["STATS"]] else stats.prefix
-        try({
-            statsRDS <- file.path(statsPath, 'deduplicateStats.rds')            
-            if(file.exists(statsRDS)) existingStats <- readRDS(statsRDS)
-        })
-        out <- c(existingStats, out)
-        saveRDS(out, file=statsRDS)
         invisible(out)
     } else{
         message("Nothing to deduplicate")
     }
 }
+
+## collectStats <- function(path){
+##     statfile <- list.files(path, pattern='*_dedup_stats.rds')
+##     collate <- lapply(statfile, function(fi){
+##         val <- NULL
+##         try({
+##             val <- readRDS(fi)
+##             vs <- val$stats$dt
+##             setkey(vs, multiplicity)
+##             val$multiplicity <- c(mean=mean(vs[,multiplicity]), singleton=sum(vs[,multiplicity]==1),
+##                                   quantile(vs[,multiplicity], c(seq(.1, .9, by=.1), .99, .999, .9999)))
+##             val$umiByMult <- sort(
+##         })
+        
+##         val
+##     })
+##     collate
+## }
 
 SEQ_IDX_START <- 5
 SEQ_IDX_LEN <- 7
@@ -102,18 +114,25 @@ collapseLowQualityAlignments <- function(dt, minProb=.3, maxProb=.8){
     dt[rank<5 & mapq>minQ, keep:=TRUE]
     dt <- dt[keep==TRUE,]
     dt[,':='(keep=NULL,
-             rank=NULL)]
+             rank=NULL, nminQ=NULL, nhiQ=NULL, mapq=NULL)]
     dt
 }
 
-##bamfilename: character giving filename to bam
-##destination.prefix: string (maybe directory name) to prepend to output
-## index=FALSE: is the bam filed indexed by its coordinate system?  Leave FALSE.
-## chunksize: how many records to read in at once?
-## trim.len: how far should the reads be trimmed for the purposes of finding duplicates
-## return.stats: should statistics regarding the deduplication be returned
-## write: should the deduplicated files be written (or just stats returned).
-writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATED_BAM/', chunksize=2e6, trim.len=50, return.stats=TRUE,write=TRUE,debug=0, ...){
+
+##' Deduplicate a single bam file
+##'
+##' Parse a file and test for duplicate reads by comparing the rnames (reference name) and sequence identity for equivalency.
+##' At the moment, this involves streaming over the file twice (once to mark duplicate rnaes
+##' @param bamfilename character giving filename to bam
+##' @param destination.prefix prefix, relative to the bamfilename path, to write output
+##' @param chunksize How many records to read in at a time?
+##' @param trim.len How long to trim reads for the purposes of finding duplicates?
+##' @param stats.path If not NULL, the path to which  prefix_dedup_stats.rds files will be written.
+##' @param write Should the deduplicated .bam be written (vs only calculate stats)
+##' @param debug higher values report more diagnostics.
+##' @param ... arguments passed to getUniqueQname
+##' @return a list containing `ndiscard` (number of reads discarded), `nkeep` (number of reads kept), `dest` (the stem of the destination filename).
+writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATED_BAM/', chunksize=5e6, trim.len=50, stats.path=NULL, write=TRUE,debug=0, ...){
     what <- c("qname", "rname", "pos", "seq", "qual", "mapq")
     ## For the deduplication, it suffices to get the *primary* mapping of the forward read
     ## (Because we just use the first qname at the moment, anyways)
@@ -126,7 +145,10 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
         bamdtlist <- list()
         j <- 1
         while(length((bam <- scanBam(bf, param=ScanBamParam(what=what, flag=flag))[[1]])$qname)>0 && nrbam<chunksize){
-            if(debug>1) message('Processing chunk ', paste(i,j), ' of ', bamfilename)
+            if(debug>1){
+                message('Processing chunk ', paste(i,j), ' of ', bamfilename)
+                message('Memory used ', pryr::mem_used())
+            }
             
         ## squal is negative sum of qualities (so that sorting in ascending order gives highest quality reads first)
             bamdtlist[[j]] <- data.table(qname = bam$qname, rname=bam$rname, pos=bam$pos, idx=seq_along(bam$qname), seq=substr(as.character(bam$seq), 1, trim.len),  squal=-alphabetScore(bam$qual), mapq=bam$mapq)
@@ -154,30 +176,30 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
 ' reads total')     
     message('Keeping ', nrow(goodqnametable), ' of which ', 
          nrow(goodqnametable[multiplicity>0]), ' are mapped.')
+     message('Memory used ', pryr::mem_used())
     filterFunc <- function(DF) !(DF$qname %in% badqname)
     FR <- IRanges::FilterRules(filterFunc)
     #FR <- IRanges::FilterRules(function(DF) !(DF$qname %in% badqname))
-    destname <- file.path(destination.prefix, paste0(RSEMstripExtension(basename(bamfilename))))
+    destname <- paste0(RSEMstripExtension(basename(bamfilename)))
+    destpath <- file.path(destination.prefix, destname)
     dest <- stats <- NULL
     if(write){
-        tmpdest <- paste0(destname, '.incomplete') #so that if we error out we don't leave incomplete bam files sitting around
-        dest <- filterBam(bamfilename, destination=tmpdest, index=character(0), filter=FR, params=ScanBamParam(what='qname'), indexDestination=FALSE, yieldSize=floor(chunksize/5))
-        file.rename(tmpdest, paste0(destname, '.bam'))
+        tmpdest <- paste0(destpath, '.incomplete') #so that if we error out we don't leave incomplete bam files sitting around
+        bf <- open(BamFile(bamfilename, yieldSize=floor(chunksize/10)))
+        on.exit(close(bf))
+        dest <- filterBam(bf, destination=tmpdest, index=character(0), filter=FR, params=ScanBamParam(what='qname'), indexDestination=FALSE)
+        file.rename(tmpdest, paste0(destpath, '.bam'))
     }
-    
-    if(return.stats){
+
+    retval <-  list(ndiscard=length(badqname), nkeep=length(setdiff(goodqname, badqname)), dest=RSEMstripExtension(basename(bamfilename)))
+    if(!is.null(stats.path)){
         multiplicityUnmapped <- goodqnametable[,multiplicity]
         potentialDupED <- do.call(c, lapply(uniq, '[[', 'potentialDupED'))
-        rname <- goodqnametable[multiplicity>0, rname]
-        umi <- goodqnametable[multiplicity>0,umi]
-        stats <- list(potentialDupED=potentialDupED[multiplicityUnmapped>0],
-                      multiplicity=multiplicityUnmapped[multiplicityUnmapped>0],
-                      rname=rname,
-                      umi=umi)
-        
+        stats <- list(potentialDupED=potentialDupED[!is.na(potentialDupED)], dt=goodqnametable[multiplicity>0, .(rname, umi, multiplicity)], chunks=length(uniq))
+        statsOutput <- file.path(stats.path, paste0(destname, '_dedup_stats.rds')
+        saveRDS(c(retval, stats), file=statsOutput)
     }
-    
-    list(ndiscard=length(badqname), nkeep=length(setdiff(goodqname, badqname)), dest=RSEMstripExtension(basename(bamfilename)), stats=stats)
+    return(retval)
 }
 
 
@@ -191,11 +213,11 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
 ##' @param umipattern regular expression matching the UMIs in the qnames
 ##' @param max.edit.dist distance below which we declare two candidate to be duplicates
 ##' @param debug higher numbers result in more verbose output
-##' @return list with elements badqname (a character vector of qnames to discard)
-## goodqname (data.table of qnames to keep)
-## ed (sample of edit distances of potential duplicates, useful to tune max.edit.dist)
-## multiplicity (number of times each duplicate appeared, of interest to estimate fragment dropout rate)
-getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug=1, usePosition=TRUE){
+##' @param usePosition If TRUE, the alignment position is used as a key, otherwise a 5-mer of the sequence is used
+##' @return list with elements `badqname` (a character vector of qnames to discard)
+##' `goodqnames` (data.table of qnames to keep, multiplicity, umi, and rname)
+##' ed (sample of edit distances of potential duplicates, useful to tune max.edit.dist)
+getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug=1, usePosition=FALSE){
     tic <- Sys.time()
     setkey(bamdt, qname, rname, pos, squal)
     
@@ -215,13 +237,13 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
     ## first matching alignment for each read
     ##    (because we use alignments as heuristic to place similar reads into
     ##     equivalence classes )
-    dtdup <- dtdup[unique(dtdup$qname),,mult='first']
+    ## dtdup <- dtdup[unique(dtdup$qname),,mult='first']
     ## track statistics relating to edit distances and multiplicities
     multiplicity <- ed <- rep(NA, min(1e4, nrow(dtdup)))
     ## extract UMI from qname
     dtdup[,umi:=stri_extract_last(qname, regex=umipattern)]
     ## sort by rname, pos and umi
-    if(!usePosition) dtdup[,pos:=cut(pos, 10)]
+    if(!usePosition) dtdup[,pos:=substr(seq, SEQ_IDX_START, SEQ_IDX_START + 4)]
     setkey(dtdup, rname, pos, umi, squal)
 
     
@@ -279,7 +301,8 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
     badqnames <- goodqname[keep==FALSE,qname]
     
     ## sum of multiplicities should equal the number of mapped reads
-    stopifnot(goodqname[keep==TRUE,sum(multiplicity)]==length(unique(bamdt[!is.na(pos), qname])))
+    stopifnot(goodqname[keep==TRUE,sum(multiplicity)]>=length(unique(bamdt[!is.na(pos), qname])))
+    stopifnot(length(intersect(goodqname[keep==FALSE, qname], goodqname[keep==TRUE,qname]))==0)
     
     return(list(badqnames=badqnames,
                 goodqnames=goodqname[keep==TRUE,],
