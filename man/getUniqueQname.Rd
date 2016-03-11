@@ -5,7 +5,7 @@
 \title{Generate a candidate list of *duplicate* reads using UMI/Sequence}
 \usage{
 getUniqueQname(bamdt, umipattern = "[ACGT]+$", max.edit.dist = 8,
-  debug = 1)
+  debug = 1, usePosition = FALSE)
 }
 \arguments{
 \item{bamdt}{a data.table with qname, rname, pos and seq}
@@ -15,9 +15,13 @@ getUniqueQname(bamdt, umipattern = "[ACGT]+$", max.edit.dist = 8,
 \item{max.edit.dist}{distance below which we declare two candidate to be duplicates}
 
 \item{debug}{higher numbers result in more verbose output}
+
+\item{usePosition}{If TRUE, the alignment position is used as a key, otherwise a 5-mer of the sequence is used}
 }
 \value{
-list with elements badqname (a character vector of qnames to discard)
+list with elements `badqname` (a character vector of qnames to discard)
+`goodqnames` (data.table of qnames to keep, multiplicity, umi, and rname)
+ed (sample of edit distances of potential duplicates, useful to tune max.edit.dist)
 }
 \description{
 The mapping position (POS/rname) is used as heuristic to find reads with

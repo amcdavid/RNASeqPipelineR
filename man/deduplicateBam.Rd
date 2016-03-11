@@ -4,7 +4,8 @@
 \alias{deduplicateBam}
 \title{Deduplicate a folder of .bams by using UMIs}
 \usage{
-deduplicateBam(ncores = 1, bam.path, destination.prefix = "../BAM/", ...)
+deduplicateBam(ncores = 6, bam.path,
+  destination.prefix = "../DEDUPLICATED_BAM", stats.prefix, ...)
 }
 \arguments{
 \item{ncores}{\code{integer} number of parallel processes to use. Be careful not to exceed the available memory--children processes appear to burst up to 2 gigs ram per million lines of .BAM to be read in at a time.  (You can control this by setting chunksize to a smaller value).}
@@ -12,6 +13,8 @@ deduplicateBam(ncores = 1, bam.path, destination.prefix = "../BAM/", ...)
 \item{bam.path}{If provided, \code{character} giving the folder of input .bams.  If missing, then use the \code{RSEM} folder.}
 
 \item{destination.prefix}{If provided, a \code{character} giving the folder of output .bams.  If missing, then use '../DEDUPLICATED_BAM' (evaluated relative to bam.path)}
+
+\item{stats.prefix}{If provided, a \code{character} giving the folder of output .bams.  If missing, then use the 'STATS' directory of the project.}
 
 \item{...}{additional arguments passed to \code{writeDeduplicatedBam}}
 }
