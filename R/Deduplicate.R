@@ -147,7 +147,7 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
         while(length((bam <- scanBam(bf, param=ScanBamParam(what=what, flag=flag))[[1]])$qname)>0 && nrbam<chunksize){
             if(debug>1){
                 message('Processing chunk ', paste(i,j), ' of ', bamfilename)
-                message('Memory used ', pryr::mem_used())
+                message('Memory used ', pryr::mem_used()/2^20, ' MB')
             }
             
         ## squal is negative sum of qualities (so that sorting in ascending order gives highest quality reads first)
@@ -176,7 +176,7 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
 ' reads total')     
     message('Keeping ', nrow(goodqnametable), ' of which ', 
          nrow(goodqnametable[multiplicity>0]), ' are mapped.')
-     message('Memory used ', pryr::mem_used())
+     message('Memory used ', pryr::mem_used()/2^20, ' MB')
     filterFunc <- function(DF) !(DF$qname %in% badqname)
     FR <- IRanges::FilterRules(filterFunc)
     #FR <- IRanges::FilterRules(function(DF) !(DF$qname %in% badqname))
