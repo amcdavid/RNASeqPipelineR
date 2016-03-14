@@ -118,6 +118,7 @@ collapseLowQualityAlignments <- function(dt, minProb=.3, maxProb=.8){
     dt
 }
 
+isEmptyList <- function(x) length(x[[1]])==0
 
 ##' Deduplicate a single bam file
 ##'
@@ -144,10 +145,10 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
         nrbam <- 0
         bamdtlist <- list()
         j <- 1
-        while(length((bam <- scanBam(bf, param=ScanBamParam(what=what, flag=flag))[[1]])$qname)>0 && nrbam<chunksize){
+        while(!isEmptyList((bam <- scanBam(bf, param=ScanBamParam(what=what, flag=flag))[[1]])) && nrbam<chunksize){
             if(debug>1){
                 message('Processing chunk ', paste(i,j), ' of ', bamfilename)
-                message('Memory used ', pryr::mem_used()/2^20, ' MB')
+                message('Memory used ', round(pryr::mem_used()/2^20, 0), ' MB')
             }
             
         ## squal is negative sum of qualities (so that sorting in ascending order gives highest quality reads first)
@@ -156,11 +157,11 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
             nrbam <- nrow(bamdtlist[[j]]) + nrbam
             j <- j +1
         }
+        if(length(bam$qname)==0) break
         bamdt <- rbindlist(bamdtlist)
         gc()
         uniq[[i]] <- getUniqueQname(bamdt, debug=debug, ...)
         i <- i+1
-        if(length(bam$qname)==0) break
     }
     rm(bamdt)
     rm(bam)
@@ -176,7 +177,7 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
 ' reads total')     
     message('Keeping ', nrow(goodqnametable), ' of which ', 
          nrow(goodqnametable[multiplicity>0]), ' are mapped.')
-     message('Memory used ', pryr::mem_used()/2^20, ' MB')
+     message('Memory used ', round(pryr::mem_used()/2^20, 2), ' MB')
     filterFunc <- function(DF) !(DF$qname %in% badqname)
     FR <- IRanges::FilterRules(filterFunc)
     #FR <- IRanges::FilterRules(function(DF) !(DF$qname %in% badqname))
