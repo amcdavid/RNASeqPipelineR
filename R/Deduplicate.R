@@ -62,7 +62,7 @@ deduplicateBam <- function(ncores=6, bam.path, destination.prefix='../DEDUPLICAT
     if(length(bamyes)>0){
         message("Deduplicating ", length(bamyes), " files to ", dest)
         if(ncores>1){
-            out <- parallel::mclapply(bamyes, function(x) writeDeduplicatedBam(x, destination.prefix=dest, stats.path=statsPath, ...), mc.cores=ncores)
+            out <- parallel::mclapply(bamyes, function(x) writeDeduplicatedBam(x, destination.prefix=dest, stats.path=statsPath, ...), mc.cores=ncores, mc.preschedule=FALSE)
         } else{
             out <- lapply(bamyes, function(x) writeDeduplicatedBam(x, destination.prefix=dest, stats.path=statsPath, ...))
         }
