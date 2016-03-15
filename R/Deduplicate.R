@@ -141,10 +141,14 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
     bf <- open(BamFile(bamfilename, yieldSize=chunksize))
     uniq <- list()
     i <- 1
-    repeat{
+
+    ## Until we process all lines in the bam
+    repeat {
+        ## number of lines in bamdtlist (current chunk)
         nrbam <- 0
         bamdtlist <- list()
         j <- 1
+        ## Until we have accumulated chunksize lines in bamdtlist or we exhaust the bam
         while(!isEmptyList((bam <- scanBam(bf, param=ScanBamParam(what=what, flag=flag))[[1]])) && nrbam<chunksize){
             if(debug>1){
                 message('Processing chunk ', paste(i,j), ' of ', bamfilename)
@@ -157,8 +161,8 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
             nrbam <- nrow(bamdtlist[[j]]) + nrbam
             j <- j +1
         }
-        if(length(bam$qname)==0) break
         bamdt <- rbindlist(bamdtlist)
+        if(nrow(bamdt)==0) break
         gc()
         uniq[[i]] <- getUniqueQname(bamdt, debug=debug, ...)
         i <- i+1
@@ -170,9 +174,6 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
     badqname <- unique(do.call(c, lapply(uniq, '[[', 'badqnames')))
     goodqnametable <- unique(rbindlist(lapply(uniq, '[[', 'goodqnames')))
     goodqname <- sort(goodqnametable$qname)
-    ## gqn <- as.list(rep(TRUE, length(goodqname)))
-    ## names(gqn) <- goodqname
-    ## setkey(goodqnametable, qname)
     message('In file ', bamfilename, ' ', length(goodqname)+length(badqname), 
 ' reads total')     
     message('Keeping ', nrow(goodqnametable), ' of which ', 
