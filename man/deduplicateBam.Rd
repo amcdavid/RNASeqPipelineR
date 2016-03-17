@@ -16,7 +16,7 @@ deduplicateBam(ncores = 6, bam.path,
 
 \item{stats.prefix}{If provided, a \code{character} giving the folder of output .bams.  If missing, then use the 'STATS' directory of the project.}
 
-\item{...}{additional arguments passed to \code{writeDeduplicatedBam}}
+\item{...}{additional arguments passed to \code{\link{writeDeduplicatedBam}} and \code{\link{getUniqueQname}}}
 }
 \value{
 data.table with statistics
@@ -25,5 +25,10 @@ data.table with statistics
 Each read is compared to an \emph{equivalence class} of reads that have the same mapping coordinates and UMI.
 If the sequences match within a certain edit distance (see \code{getUniqueQname}), then all except one read (the highest quality read) are removed.
 Note that for paired end reads, only the left-most (3 prime) mate will typically be compared in this process
+}
+\seealso{
+writeDeduplicatedBam
+
+getUniqueQname
 }
 

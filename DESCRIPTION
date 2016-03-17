@@ -1,8 +1,8 @@
 Package: RNASeqPipelineR
 Type: Package
 Title: Construct Standardized pipelines for processing RNASeq data.
-Version: 0.58
-Date: 2016-3-14
+Version: 0.59
+Date: 2016-3-17
 Author: Raphael Gottardo and Greg Finak
 Maintainer: Greg Finak <gfinak@fhcrc.org>
 Description: Simplifies and standardizes the pipelining of RNASeq files into

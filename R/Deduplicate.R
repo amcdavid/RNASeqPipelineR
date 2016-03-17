@@ -34,13 +34,15 @@ RSEMstripExtension <- function(x){
 ##' @param bam.path If provided, \code{character} giving the folder of input .bams.  If missing, then use the \code{RSEM} folder.
 ##' @param destination.prefix If provided, a \code{character} giving the folder of output .bams.  If missing, then use '../DEDUPLICATED_BAM' (evaluated relative to bam.path)
 ##' @param stats.prefix If provided, a \code{character} giving the folder of output .bams.  If missing, then use the 'STATS' directory of the project.
-##' @param ... additional arguments passed to \code{writeDeduplicatedBam}
+##' @param ... additional arguments passed to \code{\link{writeDeduplicatedBam}} and \code{\link{getUniqueQname}}
 ##' @return data.table with statistics
 ##' @import ShortRead
 ##' @import stringi
 ##' @import data.table
 ##' @import Rsamtools
 ##' @import pryr
+##' @seealso writeDeduplicatedBam
+##' @seealso getUniqueQname
 ##' @export
 deduplicateBam <- function(ncores=6, bam.path, destination.prefix='../DEDUPLICATED_BAM', stats.prefix, ...){
     if(missing(bam.path)){
@@ -216,10 +218,11 @@ writeDeduplicatedBam <- function(bamfilename, destination.prefix='../DEDUPLICATE
 ##' @param max.edit.dist distance below which we declare two candidate to be duplicates
 ##' @param debug higher numbers result in more verbose output
 ##' @param usePosition If TRUE, the alignment position is used as a key, otherwise a 5-mer of the sequence is used
+##' @param disableAssertions Disable sanity checking assertions.
 ##' @return list with elements `badqname` (a character vector of qnames to discard)
 ##' `goodqnames` (data.table of qnames to keep, multiplicity, umi, and rname)
 ##' ed (sample of edit distances of potential duplicates, useful to tune max.edit.dist)
-getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug=1, usePosition=FALSE){
+getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug=1, usePosition=FALSE, disableAssertions=FALSE){
     tic <- Sys.time()
     setkey(bamdt, qname, rname, pos, squal)
     
@@ -261,39 +264,48 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
         if(debug>1 & nrow(dtdup)>1000) print(noquote(paste0(nrow(dtdup), ' records to process, ', sum(goodqname$keep), ' records kept.')))
         ## number of records with same rname, pos and umi
         ## --> number of records in equivalence class
-        dtdup[,umidup:=.N, key=list(rname, pos, umi)]
+        ## dtdup[,umidup:=.N, key=list(rname, pos, umi)]
         
-        ## only one record.  keep them.
-        ## Then pop these records from dtdup
-        dt1 <- dtdup[umidup==1,.(qname, umi, rname)]
-        if(debug>2) message(nrow(dt1), " singletons kept")
-        goodqname[dt1[,.(qname, umi, rname)], ':='(keep=TRUE,
-                          multiplicity=1,
-                          umi=i.umi,
-                          rname=i.rname)]
-        dtdup <- dtdup[umidup>1,]
-        if(nrow(dtdup)==0) break
+        ## ## only one record.  keep them.
+        ## ## Then pop these records from dtdup
+        ## dt1 <- dtdup[umidup==1,.(qname, umi, rname)]
+        ## setkey(dt1, qname)
+        ## nr1 <- nrow(dt1)
+        ## ## Take first qname if there are multiples
+        ## dt1 <- unique(dt1)
+        ## browser(expr=nr1 != nrow(dt1))
+        ## if(debug>2) message(nrow(dt1), " singletons kept")
+        ## goodqname[dt1[,.(qname, umi, rname)], ':='(keep=TRUE,
+        ##                   multiplicity=1,
+        ##                   umi=i.umi,
+        ##                   rname=i.rname)]
+        ## dtdup <- dtdup[umidup>1,]
+        ## if(nrow(dtdup)==0) break
         
 	## distance between first sequence and all other members of equivalence class
-        dtdup[,Dist:={
-            adist(seq, seq[1], partial=FALSE)
-        }, key=list(rname, pos, umi)]
-
+        dtdup[,Dist:=lazyadist(seq), key=list(rname, pos, umi)]
         dtdup[,':='(umidup=sum(Dist<max.edit.dist),
                     isDup=Dist<max.edit.dist)
                  , key=list(rname, pos, umi)]
         setorder(dtdup, rname, pos, umi, squal) #sort by quality
         ## pop off first read, which should be highest quality
         dt1 <- dtdup[,.(qname=qname[1], umidup=umidup[1]),keyby=list(rname, pos, umi)]
-        if(debug>2) message(nrow(dt1), " first members of equivalence class kept")
+        setorder(dt1, qname, -umidup)
+        dt1 <- unique(dt1, by='qname')
         setkey(dt1, qname)
+        if(debug>2){
+            ndt1 <- nrow(dt1)
+            message(ndt1, " first members of equivalence class kept")
+        }
         goodqname[dt1, c('keep', 'multiplicity', 'umi', 'rname'):=list(TRUE, umidup, i.umi, i.rname)]
         ## index of edit distance matches
 	##save a subsample of edit distances
         samp <- min(nrow(dtdup), 100)
         ed[i:(i+samp-1)] <- sample(dtdup[,Dist], samp)
         ##keep non-matches (delete matches)
-        if(debug>2) message(sum(dtdup$isDup), " other members of equivalence class dropped")
+        if(debug>2) message(sum(dtdup$isDup)-ndt1, " other members of equivalence class dropped")
+        sd <- setdiff(dt1[,qname],
+                      unique(dtdup[isDup==TRUE, qname]))
         dtdup <- dtdup[isDup==FALSE,]
         i <- i + samp
         j <- j +1
@@ -303,8 +315,10 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
     badqnames <- goodqname[keep==FALSE,qname]
     
     ## sum of multiplicities should equal the number of mapped reads
-    stopifnot(goodqname[keep==TRUE,sum(multiplicity)]>=length(unique(bamdt[!is.na(pos), qname])))
-    stopifnot(length(intersect(goodqname[keep==FALSE, qname], goodqname[keep==TRUE,qname]))==0)
+    if(!disableAssertions){
+        stopifnot(goodqname[keep==TRUE,sum(multiplicity)]>=length(unique(bamdt[!is.na(pos), qname])))
+        stopifnot(length(intersect(goodqname[keep==FALSE, qname], goodqname[keep==TRUE,qname]))==0)
+    }
     
     return(list(badqnames=badqnames,
                 goodqnames=goodqname[keep==TRUE,],
@@ -312,3 +326,7 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
                 ))
 }
 
+lazyadist <- function(s){
+    if(length(s)==1) return(0)
+    adist(s[1], s, partial=FALSE)
+}

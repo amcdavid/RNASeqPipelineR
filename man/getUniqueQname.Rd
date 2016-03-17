@@ -5,7 +5,7 @@
 \title{Generate a candidate list of *duplicate* reads using UMI/Sequence}
 \usage{
 getUniqueQname(bamdt, umipattern = "[ACGT]+$", max.edit.dist = 8,
-  debug = 1, usePosition = FALSE)
+  debug = 1, usePosition = FALSE, disableAssertions = FALSE)
 }
 \arguments{
 \item{bamdt}{a data.table with qname, rname, pos and seq}
@@ -17,6 +17,8 @@ getUniqueQname(bamdt, umipattern = "[ACGT]+$", max.edit.dist = 8,
 \item{debug}{higher numbers result in more verbose output}
 
 \item{usePosition}{If TRUE, the alignment position is used as a key, otherwise a 5-mer of the sequence is used}
+
+\item{disableAssertions}{Disable sanity checking assertions.}
 }
 \value{
 list with elements `badqname` (a character vector of qnames to discard)
