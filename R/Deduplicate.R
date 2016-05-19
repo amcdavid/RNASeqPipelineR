@@ -262,35 +262,16 @@ getUniqueQname <- function(bamdt,  umipattern='[ACGT]+$', max.edit.dist=8, debug
     while(nrow(dtdup)>0){
         if(debug>2) message("Round ", j)
         if(debug>1 & nrow(dtdup)>1000) print(noquote(paste0(nrow(dtdup), ' records to process, ', sum(goodqname$keep), ' records kept.')))
-        ## number of records with same rname, pos and umi
-        ## --> number of records in equivalence class
-        ## dtdup[,umidup:=.N, key=list(rname, pos, umi)]
-        
-        ## ## only one record.  keep them.
-        ## ## Then pop these records from dtdup
-        ## dt1 <- dtdup[umidup==1,.(qname, umi, rname)]
-        ## setkey(dt1, qname)
-        ## nr1 <- nrow(dt1)
-        ## ## Take first qname if there are multiples
-        ## dt1 <- unique(dt1)
-        ## browser(expr=nr1 != nrow(dt1))
-        ## if(debug>2) message(nrow(dt1), " singletons kept")
-        ## goodqname[dt1[,.(qname, umi, rname)], ':='(keep=TRUE,
-        ##                   multiplicity=1,
-        ##                   umi=i.umi,
-        ##                   rname=i.rname)]
-        ## dtdup <- dtdup[umidup>1,]
-        ## if(nrow(dtdup)==0) break
-        
 	## distance between first sequence and all other members of equivalence class
         dtdup[,Dist:=lazyadist(seq), key=list(rname, pos, umi)]
-        dtdup[,':='(umidup=sum(Dist<max.edit.dist),
+        dtdup[,':='(umidup=sum(Dist<max.edit.dist),  ## number of records with same rname, pos and umi and similar sequence
                     isDup=Dist<max.edit.dist)
                  , key=list(rname, pos, umi)]
         setorder(dtdup, rname, pos, umi, squal) #sort by quality
         ## pop off first read, which should be highest quality
         dt1 <- dtdup[,.(qname=qname[1], umidup=umidup[1]),keyby=list(rname, pos, umi)]
         setorder(dt1, qname, -umidup)
+        ## Take first example (sorted by multiplicity) of each qname when they appear multiple times
         dt1 <- unique(dt1, by='qname')
         setkey(dt1, qname)
         if(debug>2){
