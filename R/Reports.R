@@ -1,27 +1,27 @@
 ##' Generate reports on partitioning/trimming/qc
 ##'
-##' This copies 'adaptorStats.Rmd' to the current working directory
-##' and runs \code{knit2html('adaptorStats.Rmd')} to generate a report on "partition_stats.rds".
+##' This copies 'partitionReport.Rmd' to the current working directory
+##' and runs \code{knit2html('partitionReport.Rmd')} to generate a report on "partition_stats.rds".
 ##'
 ##' You can edit the .Rmd as you see fit to customize the analysis.
 ##' @return writes a .html
 ##' @export
 partitionReport <- function(){
-    file.copy(file.path(system.file(package='RNASeqPipelineR'), 'Rmd', 'adaptorStats.Rmd'), getwd(), overwrite=FALSE)
-    knitr::knit2html('adaptorStats.Rmd')
+    file.copy(file.path(system.file(package='RNASeqPipelineR'), 'Rmd', 'partitionReport.Rmd'), getwd(), overwrite=FALSE)
+    knitr::knit2html('partitionReport.Rmd')
 }
 
 ##' Generate a report on mapping/deduplication
 ##'
 ##' @param ... named arguments giving directories in which RSEM was run.  By default, looks at \code{getConfig()[["RSEM"]]}
-##' @describeIn partitionReport copies 'qc.Rmd' and generates a report on "deduplicateStats.RData" and on mapping statistics located in various RSEM directories
+##' @describeIn partitionReport copies 'mappingReport.Rmd' and generates a report on "deduplicateStats.RData" and on mapping statistics located in various RSEM directories
 ##' @export
 mappingReport <- function(...){
     rsemlocmaybe <- list(...)
     if(length(rsemlocmaybe)>0) rsemloc <- rsemlocmaybe
 
-    file.copy(file.path(system.file(package='RNASeqPipelineR'), 'Rmd', 'qc.Rmd'), getwd(), overwrite=FALSE)
-    knitr::knit2html('qc.Rmd')
+    file.copy(file.path(system.file(package='RNASeqPipelineR'), 'Rmd', 'mappingReport.Rmd'), getwd(), overwrite=FALSE)
+    knitr::knit2html('mappingReport.Rmd')
 }
 
 ## Collate statistics that were saved from the deduplication process

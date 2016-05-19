@@ -48,7 +48,7 @@ ggplot(mapping2, aes(x=factor(WellID), y=value, col=variable))+ geom_boxplot()+f
 ```
 
 ## Multiplicity
-```{r multiplicity}
+```{r multiplicity, eval=FALSE}
 dupstat <- readRDS(file.path(stat.path, 'deduplicateStats.rds'))
 pdupstat <- RNASeqPipelineR:::processDupStats(dupstat)
 ggplot(pdupstat$mQuantile, aes(x=value))+stat_ecdf() + scale_x_log10()
